@@ -79,47 +79,79 @@ async def send_sub_request(update: Update):
     except Exception as e:
         logger.error(f"Xabar yuborish xatosi: {e}")
 
-# YOUTUBE BLOKIROVKADAN UTUVCHI STANDART PARAMETRLAR
+# MUKAMMAL VA BLOKLANMAYDIGAN YUKLASH TIZIMI
 def get_yt_opts(extra_opts=None):
     opts = {
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'ignoreerrors': True,
+        'format': 'bestaudio/best',
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'extractor_args': {
             'youtube': {
-                'player_client': ['mweb', 'android', 'web'],
+                'player_client': ['mweb', 'android', 'ios'],
                 'skip': ['hls', 'dash']
             }
         }
     }
-    # Agar cookies.txt fayli mavjud bo'lsa, uni avtomatik ulash
     if os.path.exists('cookies.txt'):
         opts['cookiefile'] = 'cookies.txt'
-        
     if extra_opts:
         opts.update(extra_opts)
     return opts
 
-# YOUTUBE SUPER FAST SEARCH
+# TEZKOR QIDIRUV (YouTube + SoundCloud Zaxira bilan)
 def search_yt_tracks(query, limit=5):
     ydl_opts = get_yt_opts({
         'extract_flat': True,
         'skip_download': True,
     })
+    
+    entries = []
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        res = ydl.extract_info(f"ytsearch{limit}:{query}", download=False)
-        return [{'id': e.get('id'), 'title': e.get('title')} for e in res.get('entries', []) if e]
+        # 1. YouTube qidiruvi
+        try:
+            res = ydl.extract_info(f"ytsearch{limit}:{query}", download=False)
+            if res and res.get('entries'):
+                entries = res.get('entries', [])
+        except Exception as e:
+            logger.error(f"YT search error: {e}")
 
-def download_mp3(video_id):
-    filename = f"{video_id}.mp3"
+        # 2. Agar YouTube ishlamasa, SoundCloud'dan izlaydi
+        if not entries:
+            try:
+                res_sc = ydl.extract_info(f"scsearch{limit}:{query}", download=False)
+                if res_sc and res_sc.get('entries'):
+                    entries = res_sc.get('entries', [])
+            except Exception as e:
+                logger.error(f"SC search error: {e}")
+
+    results = []
+    for e in entries:
+        if e:
+            track_id = e.get('id') if e.get('ie_key') == 'Youtube' or 'youtube' in e.get('url', '') else e.get('url')
+            title = e.get('title', 'Noma\'lum')
+            results.append({'id': track_id, 'title': title})
+            
+    return results
+
+def download_mp3(track_id):
+    filename = "downloaded_track.mp3"
     ydl_opts = get_yt_opts({
-        'format': 'bestaudio/best',  # Har qanday mos audioni mukammal yuklash
-        'outtmpl': video_id,
-        'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '128'}],
+        'outtmpl': 'downloaded_track.%(ext)s',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '128'
+        }],
     })
+    
+    target_url = track_id if str(track_id).startswith('http') else f"https://www.youtube.com/watch?v={track_id}"
+    
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
+        ydl.download([target_url])
+        
     return filename
 
 # GOLOS / AUDIO ORQALI ZUDLIK BILAN TOPISH
@@ -194,7 +226,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     
-    # Telegram knopka vaqti o'tib ketmasligi uchun birinchi soniyadayoq tasdiqlaymiz
     try:
         await query.answer()
     except Exception:
@@ -229,9 +260,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         video_id = data.replace("dl_", "")
         msg = await query.message.reply_text("📥 MP3 yuklanmoqda va tayyorlanmoqda...")
 
-        mp3_file = None
+        mp3_file = "downloaded_track.mp3"
         try:
-            mp3_file = download_mp3(video_id)
+            download_mp3(video_id)
             if os.path.exists(mp3_file):
                 caption_text = "🎧 @uzfrelanse orqali yuklab olindi!"
                 with open(mp3_file, 'rb') as audio:
@@ -243,14 +274,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Download error: {e}")
             await msg.edit_text("⚠️ Yuklab olishda xatolik bo'ldi.")
         finally:
-            if mp3_file and os.path.exists(mp3_file):
+            if os.path.exists(mp3_file):
                 os.remove(mp3_file)
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error(msg="Application error:", exc_info=context.error)
 
 if __name__ == '__main__':
-    # Flask serverini orqa fonda ishga tushirish (Render Port uchun)
     keep_alive()
 
     request = HTTPXRequest(
