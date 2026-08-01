@@ -12,7 +12,7 @@ from telegram.request import HTTPXRequest
 from shazamio import Shazam
 import yt_dlp
 
-# --- RENDER UCHUN KICHIK WEB SERVER (SLEEP BO'LMASLIGI UCHUN) ---
+# --- RENDER UCHUN KICHIK WEB SERVER ---
 app_flask = Flask('')
 
 @app_flask.route('/')
@@ -27,7 +27,7 @@ def keep_alive():
     t = Thread(target=run_flask)
     t.daemon = True
     t.start()
-# -------------------------------------------------------------
+# -------------------------------------
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -79,49 +79,63 @@ async def send_sub_request(update: Update):
     except Exception as e:
         logger.error(f"Xabar yuborish xatosi: {e}")
 
-# SOUNDCLOUD & ALTERNATIVE SOURCES (BLOKIROVKASIZ)
+# OPTIMALLASHGAN ULTRA-TEZKOR QIDIRUV (YouTube + SoundCloud)
 def search_tracks(query, limit=5):
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
         'extract_flat': True,
         'skip_download': True,
-        'ignoreerrors': True
+        'ignoreerrors': True,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     }
-    
+    if os.path.exists('cookies.txt'):
+        ydl_opts['cookiefile'] = 'cookies.txt'
+
     entries = []
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        # Birinchi navbatda SoundCloud orqali qidiramiz (Serverlar bloklamaydi)
+        # 1. YouTube Music / YT orqali tezkor qidiruv
         try:
-            res = ydl.extract_info(f"scsearch{limit}:{query}", download=False)
+            res = ydl.extract_info(f"ytsearch{limit}:{query}", download=False)
             if res and res.get('entries'):
                 entries = [e for e in res.get('entries', []) if e]
-        except Exception as e:
-            logger.error(f"SoundCloud Search error: {e}")
+        except Exception:
+            pass
+
+        # 2. Agar YouTube topsha olmasa yoki bloklasa, SoundCloud'dan izlaydi
+        if not entries:
+            try:
+                res_sc = ydl.extract_info(f"scsearch{limit}:{query}", download=False)
+                if res_sc and res_sc.get('entries'):
+                    entries = [e for e in res_sc.get('entries', []) if e]
+            except Exception:
+                pass
 
     results = []
-    for idx, e in enumerate(entries):
-        url = e.get('url') or e.get('webpage_url')
-        title = e.get('title', 'Noma\'lum qo\'shiq')
-        if url:
-            # URL juda uzun bo'lib ketmasligi uchun vaqtinchalik indeks saqlaymiz
-            results.append({'url': url, 'title': title})
+    for e in entries:
+        if e:
+            url = e.get('url') or e.get('webpage_url')
+            if not url and e.get('id'):
+                url = f"https://www.youtube.com/watch?v={e.get('id')}"
+            title = e.get('title', 'Noma\'lum qo\'shiq')
+            if url:
+                results.append({'url': url, 'title': title})
             
     return results
 
-def download_audio_file(audio_url, output_filename):
+# TAYYOR AUDIONING O'ZINI FAQT YUKLASH (MAX TEZLIK)
+def FAST_download_audio(audio_url, output_path):
     ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': output_filename,
+        'format': 'bestaudio/best', # Eng yaxshi tayyor audio format
+        'outtmpl': output_path,
         'quiet': True,
         'no_warnings': True,
         'ignoreerrors': True,
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '128'
-        }],
+        'nocheckcertificate': True
     }
+    if os.path.exists('cookies.txt'):
+        ydl_opts['cookiefile'] = 'cookies.txt'
+
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([audio_url])
 
@@ -134,7 +148,7 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     msg = await update.message.reply_text("⚡️ AI Ovozni tahlil qilmoqda...")
     audio_file = await update.message.voice.get_file() if update.message.voice else await update.message.audio.get_file()
-    file_path = "temp_audio.ogg"
+    file_path = f"temp_{user_id}.ogg"
     await audio_file.download_to_drive(file_path)
 
     try:
@@ -176,7 +190,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     query = update.message.text
-    msg = await update.message.reply_text("🔎 MP3 variantlari izlanmoqda...")
+    msg = await update.message.reply_text("🔎 Qo'shiqlar izlanmoqda...")
 
     try:
         tracks = search_tracks(query, limit=5)
@@ -220,7 +234,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         uid = data.split("_")[1]
         search_query = context.user_data.get(f"q_{uid}", "")
         if search_query:
-            msg = await query.message.reply_text("🔎 MP3 variantlari izlanmoqda...")
+            msg = await query.message.reply_text("🔎 Qo'shiqlar izlanmoqda...")
             tracks = search_tracks(search_query, limit=5)
             if tracks:
                 keyboard = []
@@ -241,30 +255,37 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         target_track = tracks[idx]
-        msg = await query.message.reply_text("📥 MP3 yuklanmoqda va tayyorlanmoqda...")
+        msg = await query.message.reply_text("⚡️ Yuklanmoqda...")
 
-        output_file = f"track_{user_id}.mp3"
+        output_base = f"track_{user_id}"
         try:
-            download_audio_file(target_track['url'], f"track_{user_id}")
+            FAST_download_audio(target_track['url'], output_base)
             
-            # Ba'zida yt-dlp mp3 kengaytmasini o'zi beradi
-            actual_file = output_file if os.path.exists(output_file) else f"track_{user_id}"
-            
-            if os.path.exists(actual_file):
+            # Fayl kengaytmasini topish
+            downloaded_file = None
+            for fname in os.listdir("."):
+                if fname.startswith(output_base):
+                    downloaded_file = fname
+                    break
+
+            if downloaded_file and os.path.exists(downloaded_file):
                 caption_text = f"🎧 {target_track['title']}\n\n🤖 @uzfrelanse orqali yuklab olindi!"
-                with open(actual_file, 'rb') as audio:
+                with open(downloaded_file, 'rb') as audio:
                     await query.message.reply_audio(audio=audio, caption=caption_text, title=target_track['title'])
                 await msg.delete()
             else:
-                await msg.edit_text("⚠️ MP3 faylini saqlashda xatolik bo'ldi.")
+                await msg.edit_text("⚠️ Audio tayyorlashda xatolik bo'ldi.")
         except Exception as e:
             logger.error(f"Download error: {e}")
             await msg.edit_text("⚠️ Yuklab olishda xatolik bo'ldi.")
         finally:
-            if os.path.exists(output_file):
-                os.remove(output_file)
-            elif os.path.exists(f"track_{user_id}"):
-                os.remove(f"track_{user_id}")
+            # Vaqtinchalik barcha yuklangan audiolarni tozalash
+            for fname in os.listdir("."):
+                if fname.startswith(output_base):
+                    try:
+                        os.remove(fname)
+                    except Exception:
+                        pass
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error(msg="Application error:", exc_info=context.error)
