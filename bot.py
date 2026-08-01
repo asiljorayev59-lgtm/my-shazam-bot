@@ -79,80 +79,51 @@ async def send_sub_request(update: Update):
     except Exception as e:
         logger.error(f"Xabar yuborish xatosi: {e}")
 
-# MUKAMMAL VA BLOKLANMAYDIGAN YUKLASH TIZIMI
-def get_yt_opts(extra_opts=None):
-    opts = {
+# SOUNDCLOUD & ALTERNATIVE SOURCES (BLOKIROVKASIZ)
+def search_tracks(query, limit=5):
+    ydl_opts = {
         'quiet': True,
         'no_warnings': True,
-        'nocheckcertificate': True,
-        'ignoreerrors': True,
-        'format': 'bestaudio/best',
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['mweb', 'android', 'ios'],
-                'skip': ['hls', 'dash']
-            }
-        }
-    }
-    if os.path.exists('cookies.txt'):
-        opts['cookiefile'] = 'cookies.txt'
-    if extra_opts:
-        opts.update(extra_opts)
-    return opts
-
-# TEZKOR QIDIRUV (YouTube + SoundCloud Zaxira bilan)
-def search_yt_tracks(query, limit=5):
-    ydl_opts = get_yt_opts({
         'extract_flat': True,
         'skip_download': True,
-    })
+        'ignoreerrors': True
+    }
     
     entries = []
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        # 1. YouTube qidiruvi
+        # Birinchi navbatda SoundCloud orqali qidiramiz (Serverlar bloklamaydi)
         try:
-            res = ydl.extract_info(f"ytsearch{limit}:{query}", download=False)
+            res = ydl.extract_info(f"scsearch{limit}:{query}", download=False)
             if res and res.get('entries'):
-                entries = res.get('entries', [])
+                entries = [e for e in res.get('entries', []) if e]
         except Exception as e:
-            logger.error(f"YT search error: {e}")
-
-        # 2. Agar YouTube ishlamasa, SoundCloud'dan izlaydi
-        if not entries:
-            try:
-                res_sc = ydl.extract_info(f"scsearch{limit}:{query}", download=False)
-                if res_sc and res_sc.get('entries'):
-                    entries = res_sc.get('entries', [])
-            except Exception as e:
-                logger.error(f"SC search error: {e}")
+            logger.error(f"SoundCloud Search error: {e}")
 
     results = []
-    for e in entries:
-        if e:
-            track_id = e.get('id') if e.get('ie_key') == 'Youtube' or 'youtube' in e.get('url', '') else e.get('url')
-            title = e.get('title', 'Noma\'lum')
-            results.append({'id': track_id, 'title': title})
+    for idx, e in enumerate(entries):
+        url = e.get('url') or e.get('webpage_url')
+        title = e.get('title', 'Noma\'lum qo\'shiq')
+        if url:
+            # URL juda uzun bo'lib ketmasligi uchun vaqtinchalik indeks saqlaymiz
+            results.append({'url': url, 'title': title})
             
     return results
 
-def download_mp3(track_id):
-    filename = "downloaded_track.mp3"
-    ydl_opts = get_yt_opts({
-        'outtmpl': 'downloaded_track.%(ext)s',
+def download_audio_file(audio_url, output_filename):
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': output_filename,
+        'quiet': True,
+        'no_warnings': True,
+        'ignoreerrors': True,
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '128'
         }],
-    })
-    
-    target_url = track_id if str(track_id).startswith('http') else f"https://www.youtube.com/watch?v={track_id}"
-    
+    }
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([target_url])
-        
-    return filename
+        ydl.download([audio_url])
 
 # GOLOS / AUDIO ORQALI ZUDLIK BILAN TOPISH
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -208,11 +179,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("🔎 MP3 variantlari izlanmoqda...")
 
     try:
-        tracks = search_yt_tracks(query, limit=5)
+        tracks = search_tracks(query, limit=5)
         if tracks:
             keyboard = []
-            for tr in tracks:
-                keyboard.append([InlineKeyboardButton(f"🎶 {tr['title'][:38]}...", callback_data=f"dl_{tr['id']}")])
+            context.user_data[f"search_{user_id}"] = tracks
+            for idx, tr in enumerate(tracks):
+                keyboard.append([InlineKeyboardButton(f"🎶 {tr['title'][:38]}...", callback_data=f"dl_{idx}")])
             
             reply_markup = InlineKeyboardMarkup(keyboard)
             await msg.edit_text("👇 Yuklab olish uchun birini tanlang:", reply_markup=reply_markup)
@@ -249,33 +221,50 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         search_query = context.user_data.get(f"q_{uid}", "")
         if search_query:
             msg = await query.message.reply_text("🔎 MP3 variantlari izlanmoqda...")
-            tracks = search_yt_tracks(search_query, limit=5)
-            keyboard = []
-            for tr in tracks:
-                keyboard.append([InlineKeyboardButton(f"🎶 {tr['title'][:38]}...", callback_data=f"dl_{tr['id']}")])
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await msg.edit_text("👇 Yuklab olish uchun birini tanlang:", reply_markup=reply_markup)
+            tracks = search_tracks(search_query, limit=5)
+            if tracks:
+                keyboard = []
+                context.user_data[f"search_{user_id}"] = tracks
+                for idx, tr in enumerate(tracks):
+                    keyboard.append([InlineKeyboardButton(f"🎶 {tr['title'][:38]}...", callback_data=f"dl_{idx}")])
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await msg.edit_text("👇 Yuklab olish uchun birini tanlang:", reply_markup=reply_markup)
+            else:
+                await msg.edit_text("❌ MP3 variantlari topilmadi.")
 
     elif data.startswith("dl_"):
-        video_id = data.replace("dl_", "")
+        idx = int(data.replace("dl_", ""))
+        tracks = context.user_data.get(f"search_{user_id}", [])
+        
+        if not tracks or idx >= len(tracks):
+            await query.message.reply_text("⚠️ Qidiruv natijasi eskirgan. Qaytadan izlab ko'ring.")
+            return
+
+        target_track = tracks[idx]
         msg = await query.message.reply_text("📥 MP3 yuklanmoqda va tayyorlanmoqda...")
 
-        mp3_file = "downloaded_track.mp3"
+        output_file = f"track_{user_id}.mp3"
         try:
-            download_mp3(video_id)
-            if os.path.exists(mp3_file):
-                caption_text = "🎧 @uzfrelanse orqali yuklab olindi!"
-                with open(mp3_file, 'rb') as audio:
-                    await query.message.reply_audio(audio=audio, caption=caption_text)
+            download_audio_file(target_track['url'], f"track_{user_id}")
+            
+            # Ba'zida yt-dlp mp3 kengaytmasini o'zi beradi
+            actual_file = output_file if os.path.exists(output_file) else f"track_{user_id}"
+            
+            if os.path.exists(actual_file):
+                caption_text = f"🎧 {target_track['title']}\n\n🤖 @uzfrelanse orqali yuklab olindi!"
+                with open(actual_file, 'rb') as audio:
+                    await query.message.reply_audio(audio=audio, caption=caption_text, title=target_track['title'])
                 await msg.delete()
             else:
-                await msg.edit_text("⚠️ MP3 tayyorlashda xatolik bo'ldi.")
+                await msg.edit_text("⚠️ MP3 faylini saqlashda xatolik bo'ldi.")
         except Exception as e:
             logger.error(f"Download error: {e}")
             await msg.edit_text("⚠️ Yuklab olishda xatolik bo'ldi.")
         finally:
-            if os.path.exists(mp3_file):
-                os.remove(mp3_file)
+            if os.path.exists(output_file):
+                os.remove(output_file)
+            elif os.path.exists(f"track_{user_id}"):
+                os.remove(f"track_{user_id}")
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error(msg="Application error:", exc_info=context.error)
