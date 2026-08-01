@@ -12,7 +12,7 @@ from telegram.request import HTTPXRequest
 from shazamio import Shazam
 import yt_dlp
 
-# --- RENDER UCHUN KICHIK WEB SERVER ---
+# --- RENDER UCHUN KICHIK WEB SERVER (SLEEP BO'LMASLIGI UCHUN) ---
 app_flask = Flask('')
 
 @app_flask.route('/')
@@ -27,7 +27,7 @@ def keep_alive():
     t = Thread(target=run_flask)
     t.daemon = True
     t.start()
-# -------------------------------------
+# -------------------------------------------------------------
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -79,7 +79,7 @@ async def send_sub_request(update: Update):
     except Exception as e:
         logger.error(f"Xabar yuborish xatosi: {e}")
 
-# YOUTUBE'SIZ FAQAT SOUNDCLOUD VA OCHIQ SHAKLDAGI QIDIRUV
+# SOUNDCLOUD VA XAFVS IZLASH TIZIMI
 def search_tracks(query, limit=5):
     ydl_opts = {
         'quiet': True,
@@ -91,7 +91,6 @@ def search_tracks(query, limit=5):
 
     entries = []
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        # Faqat SoundCloud orqali izlaydi (IP taqiqi umuman yo'q)
         try:
             res = ydl.extract_info(f"scsearch{limit}:{query}", download=False)
             if res and res.get('entries'):
@@ -109,15 +108,21 @@ def search_tracks(query, limit=5):
             
     return results
 
-# SOUNDCLOUD'DAN TEZKOR YUKLASH
+# DRM VA STRIMLARNI MUKAMMAL MP3 GA AYLANTIRIB YUKLASH
 def FAST_download_audio(audio_url, output_path):
     ydl_opts = {
         'format': 'bestaudio/best',
-        'outtmpl': output_path,
+        'outtmpl': f"{output_path}.%(ext)s",
         'quiet': True,
         'no_warnings': True,
         'ignoreerrors': True,
-        'nocheckcertificate': True
+        'nocheckcertificate': True,
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '128',
+        }],
+        'prefer_ffmpeg': True
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -245,9 +250,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             FAST_download_audio(target_track['url'], output_base)
             
+            # Faylni topish va o'chirishdan himoyalash
             downloaded_file = None
             for fname in os.listdir("."):
-                if fname.startswith(output_base):
+                if fname.startswith(output_base) and not fname.endswith(".ogg"):
                     downloaded_file = fname
                     break
 
@@ -257,13 +263,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await query.message.reply_audio(audio=audio, caption=caption_text, title=target_track['title'])
                 await msg.delete()
             else:
-                await msg.edit_text("⚠️ Audio tayyorlashda xatolik bo'ldi.")
+                await msg.edit_text("⚠️ Ushbu trekni yuklab bo'lmadi. Boshqa variantini tanlab ko'ring.")
         except Exception as e:
             logger.error(f"Download error: {e}")
             await msg.edit_text("⚠️ Yuklab olishda xatolik bo'ldi.")
         finally:
             for fname in os.listdir("."):
-                if fname.startswith(output_base):
+                if fname.startswith(output_base) and not fname.endswith(".ogg"):
                     try:
                         os.remove(fname)
                     except Exception:
