@@ -79,7 +79,7 @@ async def send_sub_request(update: Update):
     except Exception as e:
         logger.error(f"Xabar yuborish xatosi: {e}")
 
-# OPTIMALLASHGAN ULTRA-TEZKOR QIDIRUV (YouTube + SoundCloud)
+# YOUTUBE'SIZ FAQAT SOUNDCLOUD VA OCHIQ SHAKLDAGI QIDIRUV
 def search_tracks(query, limit=5):
     ydl_opts = {
         'quiet': True,
@@ -87,54 +87,38 @@ def search_tracks(query, limit=5):
         'extract_flat': True,
         'skip_download': True,
         'ignoreerrors': True,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
     }
-    if os.path.exists('cookies.txt'):
-        ydl_opts['cookiefile'] = 'cookies.txt'
 
     entries = []
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        # 1. YouTube Music / YT orqali tezkor qidiruv
+        # Faqat SoundCloud orqali izlaydi (IP taqiqi umuman yo'q)
         try:
-            res = ydl.extract_info(f"ytsearch{limit}:{query}", download=False)
+            res = ydl.extract_info(f"scsearch{limit}:{query}", download=False)
             if res and res.get('entries'):
                 entries = [e for e in res.get('entries', []) if e]
-        except Exception:
-            pass
-
-        # 2. Agar YouTube topsha olmasa yoki bloklasa, SoundCloud'dan izlaydi
-        if not entries:
-            try:
-                res_sc = ydl.extract_info(f"scsearch{limit}:{query}", download=False)
-                if res_sc and res_sc.get('entries'):
-                    entries = [e for e in res_sc.get('entries', []) if e]
-            except Exception:
-                pass
+        except Exception as e:
+            logger.error(f"SoundCloud search error: {e}")
 
     results = []
     for e in entries:
         if e:
             url = e.get('url') or e.get('webpage_url')
-            if not url and e.get('id'):
-                url = f"https://www.youtube.com/watch?v={e.get('id')}"
             title = e.get('title', 'Noma\'lum qo\'shiq')
             if url:
                 results.append({'url': url, 'title': title})
             
     return results
 
-# TAYYOR AUDIONING O'ZINI FAQT YUKLASH (MAX TEZLIK)
+# SOUNDCLOUD'DAN TEZKOR YUKLASH
 def FAST_download_audio(audio_url, output_path):
     ydl_opts = {
-        'format': 'bestaudio/best', # Eng yaxshi tayyor audio format
+        'format': 'bestaudio/best',
         'outtmpl': output_path,
         'quiet': True,
         'no_warnings': True,
         'ignoreerrors': True,
         'nocheckcertificate': True
     }
-    if os.path.exists('cookies.txt'):
-        ydl_opts['cookiefile'] = 'cookies.txt'
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([audio_url])
@@ -261,7 +245,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             FAST_download_audio(target_track['url'], output_base)
             
-            # Fayl kengaytmasini topish
             downloaded_file = None
             for fname in os.listdir("."):
                 if fname.startswith(output_base):
@@ -279,7 +262,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.error(f"Download error: {e}")
             await msg.edit_text("⚠️ Yuklab olishda xatolik bo'ldi.")
         finally:
-            # Vaqtinchalik barcha yuklangan audiolarni tozalash
             for fname in os.listdir("."):
                 if fname.startswith(output_base):
                     try:
