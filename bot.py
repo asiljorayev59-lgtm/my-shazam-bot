@@ -1,5 +1,8 @@
 import os
 import logging
+import asyncio
+from threading import Thread
+from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, 
@@ -9,6 +12,23 @@ from telegram.request import HTTPXRequest
 from shazamio import Shazam
 import yt_dlp
 
+# --- RENDER UCHUN KICHIK WEB SERVER (SLEEP BO'LMASLIGI UCHUN) ---
+app_flask = Flask('')
+
+@app_flask.route('/')
+def home():
+    return "Bot 24/7 ishlamoqda!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app_flask.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run_flask)
+    t.daemon = True
+    t.start()
+# -------------------------------------------------------------
+
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -17,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 shazam = Shazam()
 
-TOKEN = "8646777619:AAG4M7m-ERiRgMRPz2Dt-YFMS6d_nTtrpw8"
+TOKEN = os.environ.get("BOT_TOKEN", "8646777619:AAG4M7m-ERiRgMRPz2Dt-YFMS6d_nTtrpw8")
 CHANNEL_USERNAME = "@uzfrelanse"
 CHANNEL_URL = "https://t.me/uzfrelanse"
 
@@ -59,28 +79,41 @@ async def send_sub_request(update: Update):
     except Exception as e:
         logger.error(f"Xabar yuborish xatosi: {e}")
 
-# YOUTUBE SUPER FAST SEARCH
-def search_yt_tracks(query, limit=5):
-    ydl_opts = {
-        'extract_flat': True,
-        'skip_download': True,
+# YOUTUBE BLOKIROVKADAN UTUVCHI STANDART PARAMETRLAR
+def get_yt_opts(extra_opts=None):
+    opts = {
         'quiet': True,
         'no_warnings': True,
-        'extractor_args': {'youtube': {'player_client': ['android', 'ios']}}
+        'nocheckcertificate': True,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['mweb', 'android', 'web'],
+                'skip': ['hls', 'dash']
+            }
+        }
     }
+    if extra_opts:
+        opts.update(extra_opts)
+    return opts
+
+# YOUTUBE SUPER FAST SEARCH
+def search_yt_tracks(query, limit=5):
+    ydl_opts = get_yt_opts({
+        'extract_flat': True,
+        'skip_download': True,
+    })
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         res = ydl.extract_info(f"ytsearch{limit}:{query}", download=False)
         return [{'id': e.get('id'), 'title': e.get('title')} for e in res.get('entries', []) if e]
 
 def download_mp3(video_id):
     filename = f"{video_id}.mp3"
-    ydl_opts = {
+    ydl_opts = get_yt_opts({
         'format': 'ba/b',
         'outtmpl': video_id,
         'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '128'}],
-        'quiet': True,
-        'extractor_args': {'youtube': {'player_client': ['android', 'ios']}}
-    }
+    })
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         ydl.download([f"https://www.youtube.com/watch?v={video_id}"])
     return filename
@@ -204,6 +237,9 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     logger.error(msg="Application error:", exc_info=context.error)
 
 if __name__ == '__main__':
+    # Flask serverini orqa fonda ishga tushirish (Render Port uchun)
+    keep_alive()
+
     request = HTTPXRequest(
         connect_timeout=30.0,
         read_timeout=30.0,
