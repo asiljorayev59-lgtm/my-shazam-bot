@@ -93,6 +93,10 @@ def get_yt_opts(extra_opts=None):
             }
         }
     }
+    # Agar cookies.txt fayli mavjud bo'lsa, uni avtomatik ulash
+    if os.path.exists('cookies.txt'):
+        opts['cookiefile'] = 'cookies.txt'
+        
     if extra_opts:
         opts.update(extra_opts)
     return opts
