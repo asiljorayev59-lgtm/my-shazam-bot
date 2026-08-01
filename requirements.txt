@@ -1,4 +1,5 @@
-python-telegram-bot
-shazamio
-yt-dlp>=2024.08.01
+python-telegram-bot>=21.0
+shazamio>=0.8.0
+yt-dlp--upgrade
 requests
+pydub
