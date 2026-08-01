@@ -114,7 +114,7 @@ def search_yt_tracks(query, limit=5):
 def download_mp3(video_id):
     filename = f"{video_id}.mp3"
     ydl_opts = get_yt_opts({
-        'format': 'ba/b',
+        'format': 'bestaudio/best',  # Har qanday mos audioni mukammal yuklash
         'outtmpl': video_id,
         'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '128'}],
     })
@@ -193,7 +193,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
+    
+    # Telegram knopka vaqti o'tib ketmasligi uchun birinchi soniyadayoq tasdiqlaymiz
+    try:
+        await query.answer()
+    except Exception:
+        pass
+
     data = query.data
     user_id = query.from_user.id
 
@@ -202,7 +208,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if await check_subscription(user_id, context):
             await query.edit_message_text("✅ Rahmat! Endi botdan bemalol foydalanishingiz mumkin.")
         else:
-            await query.answer("❌ Siz hali kanalga obuna bo'lmadingiz!", show_alert=True)
+            try:
+                await query.answer("❌ Siz hali kanalga obuna bo'lmadingiz!", show_alert=True)
+            except Exception:
+                pass
 
     elif data.startswith("getmp3_"):
         uid = data.split("_")[1]
