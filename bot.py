@@ -1,6 +1,7 @@
 import os
 import logging
 import asyncio
+import requests
 from threading import Thread
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -10,14 +11,13 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 from shazamio import Shazam
-import yt_dlp
 
-# --- RENDER UCHUN KICHIK WEB SERVER (SLEEP BO'LMASLIGI UCHUN) ---
+# --- RENDER UCHUN KICHIK WEB SERVER ---
 app_flask = Flask('')
 
 @app_flask.route('/')
 def home():
-    return "Bot 24/7 ishlamoqda!"
+    return "Bot 24/7 tezkor rejimda ishlamoqda!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -27,7 +27,7 @@ def keep_alive():
     t = Thread(target=run_flask)
     t.daemon = True
     t.start()
-# -------------------------------------------------------------
+# -------------------------------------
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -48,7 +48,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "⚡️ **Tezkor AI Qo'shiq Topar Bot!**\n\n"
         "🎙 Qo'shiqdan **golos/audio** yuboring\n"
         "✍️ Yoki **qo'shiq / ijrochi nomini** yozing!\n\n"
-        "Men soniyalar ichida qo'shiqni aniqlayman va MP3 variantlarini yuklab beraman.",
+        "Men soniyalar ichida har qanday qo'shiqni topaman va tezkor yuklab beraman.",
         parse_mode='Markdown'
     )
 
@@ -79,54 +79,24 @@ async def send_sub_request(update: Update):
     except Exception as e:
         logger.error(f"Xabar yuborish xatosi: {e}")
 
-# SOUNDCLOUD VA XAFVS IZLASH TIZIMI
-def search_tracks(query, limit=5):
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'extract_flat': True,
-        'skip_download': True,
-        'ignoreerrors': True,
-    }
-
-    entries = []
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        try:
-            res = ydl.extract_info(f"scsearch{limit}:{query}", download=False)
-            if res and res.get('entries'):
-                entries = [e for e in res.get('entries', []) if e]
-        except Exception as e:
-            logger.error(f"SoundCloud search error: {e}")
-
-    results = []
-    for e in entries:
-        if e:
-            url = e.get('url') or e.get('webpage_url')
-            title = e.get('title', 'Noma\'lum qo\'shiq')
-            if url:
-                results.append({'url': url, 'title': title})
-            
-    return results
-
-# DRM VA STRIMLARNI MUKAMMAL MP3 GA AYLANTIRIB YUKLASH
-def FAST_download_audio(audio_url, output_path):
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': f"{output_path}.%(ext)s",
-        'quiet': True,
-        'no_warnings': True,
-        'ignoreerrors': True,
-        'nocheckcertificate': True,
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '128',
-        }],
-        'prefer_ffmpeg': True
-    }
-
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([audio_url])
+# BLOKLANMAYDIGAN VA ULTRA-TEZKOR MUSIC SEARCH API
+def search_fast_music(query, limit=5):
+    try:
+        # Ochiq va tezkor API orqali qidiruv (barcha o'zbekcha va chet el qo'shiqlari bor)
+        url = f"https://api.vkmusic.me/search?q={requests.utils.quote(query)}"
+        res = requests.get(url, timeout=5).json()
+        
+        results = []
+        if isinstance(res, list):
+            for item in res[:limit]:
+                results.append({
+                    'title': f"{item.get('artist', 'Noma\'lum')} - {item.get('title', 'Trek')}",
+                    'download_url': item.get('url')
+                })
+        return results
+    except Exception as e:
+        logger.error(f"Fast Search API error: {e}")
+        return []
 
 # GOLOS / AUDIO ORQALI ZUDLIK BILAN TOPISH
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -182,7 +152,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("🔎 Qo'shiqlar izlanmoqda...")
 
     try:
-        tracks = search_tracks(query, limit=5)
+        tracks = search_fast_music(query, limit=5)
         if tracks:
             keyboard = []
             context.user_data[f"search_{user_id}"] = tracks
@@ -192,7 +162,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup = InlineKeyboardMarkup(keyboard)
             await msg.edit_text("👇 Yuklab olish uchun birini tanlang:", reply_markup=reply_markup)
         else:
-            await msg.edit_text("❌ Hech narsa topilmadi.")
+            await msg.edit_text("❌ Afsuski, hech narsa topilmadi. Boshqacha nomlab ko'ring.")
 
     except Exception as e:
         logger.error(f"Matn qidiruv xatosi: {e}")
@@ -224,7 +194,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         search_query = context.user_data.get(f"q_{uid}", "")
         if search_query:
             msg = await query.message.reply_text("🔎 Qo'shiqlar izlanmoqda...")
-            tracks = search_tracks(search_query, limit=5)
+            tracks = search_fast_music(search_query, limit=5)
             if tracks:
                 keyboard = []
                 context.user_data[f"search_{user_id}"] = tracks
@@ -244,36 +214,25 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         target_track = tracks[idx]
-        msg = await query.message.reply_text("⚡️ Yuklanmoqda...")
+        msg = await query.message.reply_text("🚀 Soniya ichida yuklanmoqda...")
 
-        output_base = f"track_{user_id}"
         try:
-            FAST_download_audio(target_track['url'], output_base)
-            
-            # Faylni topish va o'chirishdan himoyalash
-            downloaded_file = None
-            for fname in os.listdir("."):
-                if fname.startswith(output_base) and not fname.endswith(".ogg"):
-                    downloaded_file = fname
-                    break
-
-            if downloaded_file and os.path.exists(downloaded_file):
+            # Faylni serverda konvertatsiya qilmasdan to'g'ridan-to'g'ri oqim bilan tezkor yuklash
+            audio_response = requests.get(target_track['download_url'], timeout=15)
+            if audio_response.status_code == 200:
                 caption_text = f"🎧 {target_track['title']}\n\n🤖 @uzfrelanse orqali yuklab olindi!"
-                with open(downloaded_file, 'rb') as audio:
-                    await query.message.reply_audio(audio=audio, caption=caption_text, title=target_track['title'])
+                await query.message.reply_audio(
+                    audio=audio_response.content,
+                    filename=f"{target_track['title']}.mp3",
+                    caption=caption_text,
+                    title=target_track['title']
+                )
                 await msg.delete()
             else:
-                await msg.edit_text("⚠️ Ushbu trekni yuklab bo'lmadi. Boshqa variantini tanlab ko'ring.")
+                await msg.edit_text("⚠️ Ushbu trekni yuklab bo'lmadi. Boshqa variantni tanlang.")
         except Exception as e:
-            logger.error(f"Download error: {e}")
-            await msg.edit_text("⚠️ Yuklab olishda xatolik bo'ldi.")
-        finally:
-            for fname in os.listdir("."):
-                if fname.startswith(output_base) and not fname.endswith(".ogg"):
-                    try:
-                        os.remove(fname)
-                    except Exception:
-                        pass
+            logger.error(f"Direct download error: {e}")
+            await msg.edit_text("⚠️ Yuklab olishda xatolik yuz berdi.")
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.error(msg="Application error:", exc_info=context.error)
